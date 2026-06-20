@@ -139,6 +139,20 @@ DRY_RUN=1 PLATFORM=linux/arm64 scripts/docker-push.sh prod
 
 > A dirty working tree appends `-dirty` to the SHA tag and prints a warning, so non-release builds stay traceable.
 
+### Running from the registry (docker compose)
+
+`docker-compose.yml` pulls the image (it does not build) and reads runtime config from `.env`. Switch the target registry/tag with environment variables:
+
+```sh
+docker login registry.oshiire.to          # once per registry
+
+docker compose up -d                        # prod (registry.oshiire.to:latest)
+TAG=0.0.5 docker compose up -d              # prod, pinned version
+REGISTRY=registry.test.oshiire.to docker compose up -d   # test registry
+```
+
+Images are built for `linux/amd64` by the push script, so the deploy host should be amd64 (or run under emulation).
+
 ## Dify variables
 
 By default the discord bot will pass the name of the user to the assistant, within the dify variable `username` and the current date as UTC string within the dify variable `now`.

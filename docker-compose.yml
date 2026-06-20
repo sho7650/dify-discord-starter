@@ -1,0 +1,14 @@
+# Pull-only compose for running the bot from a self-hosted registry.
+# Switch target registry/tag via environment variables:
+#   prod (default): docker compose up -d
+#   test:           REGISTRY=registry.test.oshiire.to docker compose up -d
+#   pinned version: TAG=0.0.5 docker compose up -d
+# Run `docker login <registry>` once before pulling private images.
+services:
+  bot:
+    image: ${REGISTRY:-registry.oshiire.to}/${IMAGE_NAME:-dify-discord-starter}:${TAG:-latest}
+    container_name: dify-discord-bot
+    env_file:
+      - .env
+    restart: unless-stopped
+    # Discord gateway bot: outbound only, no inbound ports needed.
