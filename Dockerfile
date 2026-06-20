@@ -1,5 +1,5 @@
 # Stage 1: Build the application
-FROM node:18 AS builder
+FROM node:22-slim AS builder
 
 # Set working directory
 WORKDIR /app
@@ -7,8 +7,8 @@ WORKDIR /app
 # Copy package.json and package-lock.json
 COPY package*.json ./
 
-# Install dependencies
-RUN npm install --production
+# Install dependencies (reproducible, prod-only; typescript is a prod dep so build works)
+RUN npm ci --omit=dev
 
 # Copy the rest of the application code
 COPY . .
@@ -17,7 +17,7 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Create the production image
-FROM node:18 AS production
+FROM node:22-slim AS production
 
 # Set working directory
 WORKDIR /app
