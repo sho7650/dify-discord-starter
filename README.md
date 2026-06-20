@@ -22,6 +22,29 @@ Before you begin, ensure you have the following installed:
 - Node.js (v14 or higher)
 - npm (comes with Node.js)
 
+### Reproducible environment with Nix ❄️ (recommended)
+
+This repo ships a [Nix flake](https://nixos.wiki/wiki/Flakes) that pins **Node.js 22 LTS** and the toolchain to an exact `nixpkgs` revision (`flake.lock`), so every contributor gets a byte-identical environment without installing Node manually.
+
+Requires [Nix](https://nixos.org/download) with flakes enabled.
+
+```sh
+# Enter the dev shell (downloads the pinned Node 22 on first run)
+nix develop
+
+# inside the shell: node v22.x, npm, and prettier are available
+npm ci
+npm run build
+```
+
+**Auto-activate with [direnv](https://direnv.net/)** (optional): an `.envrc` is included, so `cd` into the project enables the shell automatically:
+
+```sh
+direnv allow
+```
+
+To bump the pinned toolchain later: `nix flake update` (then commit the updated `flake.lock`).
+
 ## Setup 🛠️
 
 1. **Clone the Repository**
