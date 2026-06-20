@@ -104,6 +104,40 @@ Once the bot is added to your server and the slash command is installed, you can
 - `npm start`: Starts the bot using the compiled JavaScript code.
 - `npm run dev`: Runs the bot in development mode with hot reloading, ideal for development purposes.
 - `npm run install-cmd`: A shortcut script to run the install command script.
+- `npm run docker:push:test`: Builds and pushes the Docker image to the **test** registry (`registry.test.oshiire.to`).
+- `npm run docker:push:prod`: Builds and pushes the Docker image to the **production** registry (`registry.oshiire.to`).
+
+## Docker image push 🐳
+
+Build and push the Docker image to a self-hosted registry. The target (`test` or `prod`) is chosen explicitly at run time.
+
+```sh
+# Log in once per registry (credentials are never stored in the repo)
+docker login registry.test.oshiire.to
+docker login registry.oshiire.to
+
+# Push (choose the target)
+npm run docker:push:test     # -> registry.test.oshiire.to
+npm run docker:push:prod     # -> registry.oshiire.to
+
+# Or call the script directly
+scripts/docker-push.sh test
+```
+
+Each push tags the image three ways: the `package.json` version (e.g. `0.0.5`), the short git SHA, and `latest`.
+
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `IMAGE_NAME` | `dify-discord-starter` | Image repository path (set this if your registry needs a project namespace, e.g. `library/dify-discord-starter`). |
+| `PLATFORM` | `linux/amd64` | Target build platform. |
+| `DRY_RUN` | `0` | Set to `1` to build without pushing. |
+
+```sh
+# Example: dry-run a prod build for arm64
+DRY_RUN=1 PLATFORM=linux/arm64 scripts/docker-push.sh prod
+```
+
+> A dirty working tree appends `-dirty` to the SHA tag and prints a warning, so non-release builds stay traceable.
 
 ## Dify variables
 

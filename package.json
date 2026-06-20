@@ -8,7 +8,9 @@
     "start": "node dist/index.js",
     "install-cmd": "ts-node scripts/install.ts",
     "dev": "nodemon",
-    "release": "standard-version"
+    "release": "standard-version",
+    "docker:push:test": "bash scripts/docker-push.sh test",
+    "docker:push:prod": "bash scripts/docker-push.sh prod"
   },
   "author": "Pascal Malbranche",
   "license": "MIT",
