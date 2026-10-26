@@ -99,7 +99,9 @@ export class ChatHandlers {
       case "allowed":
         return this.handleChatMessage(message);
       case "rejected":
-        await message.reply(RATE_LIMIT_REPLY);
+        await trySend("rate limit notice", () =>
+          message.reply(RATE_LIMIT_REPLY)
+        );
         return;
       case "rejected-again":
         return;
@@ -111,7 +113,9 @@ export class ChatHandlers {
       await this.handleChatCommand(interaction);
     } else if (interaction.commandName === "new-conversation") {
       this.conversations.reset(interaction.channelId, interaction.user.id);
-      await interaction.reply("New conversation started!");
+      await trySend("new conversation notice", () =>
+        interaction.reply("New conversation started!")
+      );
     }
   }
 
@@ -119,11 +123,16 @@ export class ChatHandlers {
     // Discord requires a response to every command, so each rejection is
     // answered, privately.
     if (this.deps.rateLimiter.consume(interaction.user.id) !== "allowed") {
-      await interaction.reply({ content: RATE_LIMIT_REPLY, ephemeral: true });
+      await trySend("rate limit notice", () =>
+        interaction.reply({ content: RATE_LIMIT_REPLY, ephemeral: true })
+      );
       return;
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    const deferred = await trySend("deferReply", () =>
+      interaction.deferReply({ ephemeral: true })
+    );
+    if (!deferred) return;
 
     const scope: ConversationScope = {
       kind: "private",
@@ -131,6 +140,9 @@ export class ChatHandlers {
       userId: interaction.user.id,
     };
 
+    // Chatflow answers arrive while the stream is still open; chain the sends
+    // so every chunk goes out in order before the final answer.
+    let sending = Promise.resolve();
     try {
       const { messages, files } = await this.generate(
         {
@@ -150,20 +162,26 @@ export class ChatHandlers {
         {
           handleChatflowAnswer: (chatflowMessages, files) => {
             if (chatflowMessages.length > 0) {
-              this.sendInteractionAnswer(interaction, chatflowMessages, files);
+              sending = sending.then(() =>
+                this.sendInteractionAnswer(interaction, chatflowMessages, files)
+              );
             }
           },
         }
       );
 
-      this.sendInteractionAnswer(interaction, messages, files);
+      await sending;
+      await this.sendInteractionAnswer(interaction, messages, files);
     } catch (error) {
       console.error("Error sending message to Dify:", error);
-      await interaction.editReply({ content: ERROR_REPLY });
+      await sending;
+      await trySend("error reply", () =>
+        interaction.editReply({ content: ERROR_REPLY })
+      );
     }
   }
 
-  private sendInteractionAnswer(
+  private async sendInteractionAnswer(
     interaction: IncomingCommand,
     messages: string[],
     files?: DifyFile[]
@@ -175,16 +193,20 @@ export class ChatHandlers {
         index === 0 ? { files: files?.map(toAttachment) } : {};
 
       if (!interaction.replied && index === 0) {
-        interaction.editReply({
-          content: m,
-          ...additionalFields,
-        });
+        await trySend("editReply", () =>
+          interaction.editReply({
+            content: m,
+            ...additionalFields,
+          })
+        );
       } else {
-        interaction.followUp({
-          content: m,
-          ephemeral: true,
-          ...additionalFields,
-        });
+        await trySend("followUp", () =>
+          interaction.followUp({
+            content: m,
+            ephemeral: true,
+            ...additionalFields,
+          })
+        );
       }
     }
   }
@@ -198,6 +220,8 @@ export class ChatHandlers {
 
     message.channel.sendTyping?.().catch(console.error);
 
+    // See handleChatCommand for why sends are chained.
+    let sending = Promise.resolve();
     try {
       const { messages, files } = await this.generate(
         {
@@ -217,20 +241,24 @@ export class ChatHandlers {
           },
           handleChatflowAnswer: (chatflowMessages, files) => {
             if (chatflowMessages.length > 0) {
-              this.sendChatAnswer(message, chatflowMessages, files);
+              sending = sending.then(() =>
+                this.sendChatAnswer(message, chatflowMessages, files)
+              );
             }
           },
         }
       );
 
-      this.sendChatAnswer(message, messages, files);
+      await sending;
+      await this.sendChatAnswer(message, messages, files);
     } catch (error) {
       console.error("Error sending message to Dify:", error);
-      await message.reply(ERROR_REPLY);
+      await sending;
+      await trySend("error reply", () => message.reply(ERROR_REPLY));
     }
   }
 
-  private sendChatAnswer(
+  private async sendChatAnswer(
     message: IncomingMessage,
     messages: string[],
     files?: DifyFile[]
@@ -238,12 +266,14 @@ export class ChatHandlers {
     for (const [index, m] of messages.entries()) {
       if (m.length === 0) continue;
       if (index === 0) {
-        message.reply({
-          content: m,
-          files: files?.map(toAttachment),
-        });
+        await trySend("reply", () =>
+          message.reply({
+            content: m,
+            files: files?.map(toAttachment),
+          })
+        );
       } else {
-        message.reply(m);
+        await trySend("reply", () => message.reply(m));
       }
     }
   }
@@ -271,6 +301,24 @@ export class ChatHandlers {
       default:
         return "";
     }
+  }
+}
+
+/**
+ * Runs a Discord send and logs instead of throwing when it fails (missing
+ * permissions, an expired interaction, an attachment Discord cannot fetch...).
+ * Returns whether the send succeeded.
+ */
+async function trySend(
+  label: string,
+  send: () => Promise<unknown>
+): Promise<boolean> {
+  try {
+    await send();
+    return true;
+  } catch (error) {
+    console.error(`Failed to send ${label} to Discord:`, error);
+    return false;
   }
 }
 

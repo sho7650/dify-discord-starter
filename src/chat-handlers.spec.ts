@@ -342,4 +342,96 @@ describe("ChatHandlers", () => {
       expect(command.followUp).not.toHaveBeenCalled();
     });
   });
+
+  describe("Discord send failures", () => {
+    const missingPermissions = () =>
+      Promise.reject(new Error("Missing Permissions"));
+    let logError: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      logError = vi.spyOn(console, "error").mockImplementation(() => {});
+      return () => vi.restoreAllMocks();
+    });
+
+    it("logs and swallows a failed reply to a mention", async () => {
+      const message = fakeMessage();
+      message.reply.mockImplementation(missingPermissions);
+
+      await expect(
+        createHandlers().handleMessage(message)
+      ).resolves.toBeUndefined();
+
+      expect(logError).toHaveBeenCalled();
+    });
+
+    it("logs and swallows a failed editReply and followUp on /chat", async () => {
+      const long = "a".repeat(30);
+      const command = fakeCommand();
+      command.editReply.mockImplementation(missingPermissions);
+      command.followUp.mockImplementation(missingPermissions);
+
+      await expect(
+        createHandlers(
+          { maxMessageLength: 20 },
+          fakeDify(`${long}\n${long}`).dify
+        ).handleCommand(command)
+      ).resolves.toBeUndefined();
+
+      expect(command.followUp).toHaveBeenCalled();
+      expect(logError).toHaveBeenCalled();
+    });
+
+    it("logs and swallows a failed deferReply on /chat", async () => {
+      const command = fakeCommand();
+      command.deferReply.mockImplementation(missingPermissions);
+
+      await expect(
+        createHandlers().handleCommand(command)
+      ).resolves.toBeUndefined();
+
+      expect(logError).toHaveBeenCalled();
+    });
+
+    it("logs and swallows a failure to send the error reply itself", async () => {
+      const failingDify = fakeDify("", () => {
+        throw new Error("Dify is down");
+      }).dify;
+      const message = fakeMessage();
+      message.reply.mockImplementation(missingPermissions);
+      const command = fakeCommand();
+      command.editReply.mockImplementation(missingPermissions);
+      const handlers = createHandlers({}, failingDify);
+
+      await expect(handlers.handleMessage(message)).resolves.toBeUndefined();
+      await expect(handlers.handleCommand(command)).resolves.toBeUndefined();
+
+      expect(message.reply).toHaveBeenCalledWith(ERROR_REPLY);
+      expect(command.editReply).toHaveBeenCalledWith({ content: ERROR_REPLY });
+    });
+
+    it("logs and swallows a failed rate-limit notice", async () => {
+      const handlers = createHandlers(
+        {},
+        fakeDify().dify,
+        new RateLimiter({ max: 1, windowSec: 60 })
+      );
+      await handlers.handleMessage(fakeMessage());
+      const message = fakeMessage();
+      message.reply.mockImplementation(missingPermissions);
+      const command = fakeCommand();
+      command.reply.mockImplementation(missingPermissions);
+
+      await expect(handlers.handleMessage(message)).resolves.toBeUndefined();
+      await expect(handlers.handleCommand(command)).resolves.toBeUndefined();
+    });
+
+    it("logs and swallows a failed reply to /new-conversation", async () => {
+      const command = fakeCommand({ commandName: "new-conversation" });
+      command.reply.mockImplementation(missingPermissions);
+
+      await expect(
+        createHandlers().handleCommand(command)
+      ).resolves.toBeUndefined();
+    });
+  });
 });
