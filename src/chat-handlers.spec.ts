@@ -36,6 +36,61 @@ describe("ChatHandlers", () => {
     });
   });
 
+  describe("mentions", () => {
+    it.each([
+      ["@everyone/@here", { mentionsEveryone: true }],
+      ["a role the bot has", { mentionsBotRole: true }],
+    ])(
+      "does not call Dify for a mention of %s alone",
+      async (_label, mention) => {
+        const { dify, requests } = fakeDify();
+        const message = fakeMessage({
+          content: "hello all",
+          mentionsBot: false,
+          ...mention,
+        });
+
+        await createHandlers(
+          { messageContentAllowed: false },
+          dify
+        ).handleMessage(message);
+
+        expect(requests).toHaveLength(0);
+        expect(message.reply).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([
+      ["a direct mention", { mentionsBot: true }],
+      ["a reply that pings the bot", { repliesToBot: true, replyPings: true }],
+      ["a reply that does not ping the bot", { repliesToBot: true }],
+    ])("calls Dify for %s", async (_label, mention) => {
+      const { dify, requests } = fakeDify();
+      const message = fakeMessage({
+        content: "hello",
+        mentionsBot: false,
+        ...mention,
+      });
+
+      await createHandlers(
+        { messageContentAllowed: false },
+        dify
+      ).handleMessage(message);
+
+      expect(requests).toHaveLength(1);
+    });
+
+    it("ignores messages sent by bots", async () => {
+      const { dify, requests } = fakeDify();
+
+      await createHandlers({}, dify).handleMessage(
+        fakeMessage({ authorIsBot: true })
+      );
+
+      expect(requests).toHaveLength(0);
+    });
+  });
+
   describe("trigger keywords", () => {
     it("keeps answering mentions when TRIGGER_KEYWORDS was invalid", async () => {
       const triggerKeywords = parseTriggerKeywords("{}", () => {});

@@ -26,7 +26,10 @@ export interface IncomingMessage {
   channelId: string;
   guildId: string | null;
   author: ChatUser & { bot: boolean };
-  mentions: { has(userId: string): boolean };
+  mentions: {
+    users: { has(userId: string): boolean };
+    repliedUser: { id: string } | null;
+  };
   channel: { sendTyping?: () => Promise<void> };
   reply(options: string | MessageReplyOptions): Promise<unknown>;
 }
@@ -72,7 +75,11 @@ export class ChatHandlers {
     if (message.author.bot) return;
 
     const { messageContentAllowed, triggerKeywords } = this.deps.config;
-    const isMentioned = message.mentions.has(this.deps.botUserId);
+    // Only a direct mention or a reply to the bot counts: @everyone, @here and
+    // role mentions would otherwise let anyone fan out Dify calls.
+    const { users, repliedUser } = message.mentions;
+    const isMentioned =
+      users.has(this.deps.botUserId) || repliedUser?.id === this.deps.botUserId;
     const isKeywordTriggered =
       messageContentAllowed &&
       triggerKeywords.some((keyword: string) =>

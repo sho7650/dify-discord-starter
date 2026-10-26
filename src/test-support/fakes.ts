@@ -46,16 +46,47 @@ export interface FakeMessageOptions {
   channelId?: string;
   guildId?: string | null;
   mentionsBot?: boolean;
+  mentionsEveryone?: boolean;
+  mentionsBotRole?: boolean;
+  repliesToBot?: boolean;
+  /** Whether the reply pings the bot (Discord's "@ON" toggle). */
+  replyPings?: boolean;
 }
 
-export function fakeMessage({
-  content = `<@${BOT_ID}> hello`,
-  authorId = "user-a",
-  authorIsBot = false,
-  channelId = "channel-1",
-  guildId = "guild-1",
-  mentionsBot = true,
-}: FakeMessageOptions = {}) {
+/**
+ * Mirrors discord.js `MessageMentions`: `users` holds direct mentions plus the
+ * replied-to user when the reply pings, `repliedUser` is set on any reply, and
+ * `has()` with default options is also true for @everyone/@here and for roles
+ * the bot has.
+ */
+function fakeMentions({
+  mentionsBot = false,
+  mentionsEveryone = false,
+  mentionsBotRole = false,
+  repliesToBot = false,
+  replyPings = false,
+}: FakeMessageOptions) {
+  const users = new Set<string>();
+  if (mentionsBot || (repliesToBot && replyPings)) users.add(BOT_ID);
+  return {
+    everyone: mentionsEveryone,
+    users: { has: (userId: string) => users.has(userId) },
+    repliedUser: repliesToBot ? { id: BOT_ID } : null,
+    has: (userId: string) =>
+      users.has(userId) ||
+      (userId === BOT_ID && (mentionsEveryone || mentionsBotRole)),
+  };
+}
+
+export function fakeMessage(options: FakeMessageOptions = {}) {
+  const {
+    content = `<@${BOT_ID}> hello`,
+    authorId = "user-a",
+    authorIsBot = false,
+    channelId = "channel-1",
+    guildId = "guild-1",
+    mentionsBot = true,
+  } = options;
   const message = {
     content,
     channelId,
@@ -66,7 +97,7 @@ export function fakeMessage({
       username: authorId,
       globalName: null,
     },
-    mentions: { has: (userId: string) => mentionsBot && userId === BOT_ID },
+    mentions: fakeMentions({ ...options, mentionsBot }),
     channel: { sendTyping: vi.fn(async () => {}) },
     reply: vi.fn(async (_options: unknown) => ({})),
   } satisfies IncomingMessage;
