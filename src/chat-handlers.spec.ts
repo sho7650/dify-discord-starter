@@ -107,6 +107,27 @@ describe("ChatHandlers", () => {
 
       expect(requests).toHaveLength(0);
     });
+
+    it("sends a chatflow's intermediate answer before the final answer", async () => {
+      const node = (node_type: string) =>
+        ({ data: { node_type, title: node_type } }) as never;
+      const { dify } = fakeDify("", (callbacks) => {
+        const conversation = { conversationId: "conv-1" };
+        callbacks.onNodeStarted?.(node("llm"));
+        callbacks.onMessage("thinking...", true, conversation);
+        callbacks.onNodeFinished?.(node("answer"));
+        callbacks.onMessage("done", false, conversation);
+        callbacks.onCompleted?.();
+      });
+      const message = fakeMessage();
+
+      await createHandlers({}, dify).handleMessage(message);
+
+      expect(message.reply.mock.calls.map(([options]) => options)).toEqual([
+        { content: "thinking...", files: [] },
+        { content: "done", files: [] },
+      ]);
+    });
   });
 
   describe("trigger keywords", () => {

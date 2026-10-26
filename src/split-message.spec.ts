@@ -21,7 +21,7 @@ describe("splitMessage", () => {
 
           for (const chunk of chunks) {
             expect(chunk.length).toBeLessThanOrEqual(maxLength);
-            expect(chunk.isWellFormed()).toBe(true);
+            expect(chunk).not.toMatch(/\p{Cs}/u); // no lone surrogate
           }
           expect(chunks.join("").replaceAll("\n", "")).toBe(
             text.replaceAll("\n", "")
