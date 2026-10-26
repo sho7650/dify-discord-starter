@@ -103,6 +103,7 @@ Once the bot is added to your server and the slash command is installed, you can
 - `npm run build`: Compiles the TypeScript code to JavaScript, preparing it for execution.
 - `npm start`: Starts the bot using the compiled JavaScript code.
 - `npm run dev`: Runs the bot in development mode with hot reloading, ideal for development purposes.
+- `npm test`: Runs the unit tests with Vitest (`npm run test:coverage` adds a coverage report).
 - `npm run install-cmd`: A shortcut script to run the install command script.
 - `npm run docker:push:test`: Builds and pushes the Docker image to the **test** registry (`registry.test.oshiire.to`).
 - `npm run docker:push:prod`: Builds and pushes the Docker image to the **production** registry (`registry.oshiire.to`).
@@ -164,13 +165,17 @@ Be aware that currently, there is no mechanic to clear or summarize the history.
 
 If you do not set this variable, the bot will not remember messages - the bot will even forget the last message the bot has sent to the channel.
 
+In every mode, a conversation never continues in another place (a server channel or a DM), and public exchanges (mentions, replies to the bot and keywords) are always a separate conversation from the private `/chat` conversation.
+
+`/new-conversation` restarts the public and private conversations you take part in at the place where you run it. Other users' private conversations and conversations in other places are kept.
+
 ### History per user
 
-Set it to `user` if you want the bot to enable an own chat history for every user. The assistant will remember every message of the user accross channels and servers.
+Set it to `user` if you want the bot to enable an own chat history for every user. The assistant remembers the messages of each user separately in each place, and separately for public exchanges and `/chat`.
 
 ### History per channel
 
-Set it to `channel` if you want the bot to enable a history for channels. The assistant will remember every message in the channe regardless from which user it came. You should use the dify variable "username" to allow the bot recognize the author of messages, otherwise the assistant will think all messages come from the same user.
+Set it to `channel` if you want the bot to enable a history for channels. The assistant will remember every public exchange in the channel regardless from which user it came. `/chat` conversations stay private to each user in that channel. You should use the dify variable "username" to allow the bot recognize the author of messages, otherwise the assistant will think all messages come from the same user.
 
 Hint: If you use this, the userId of messages will no longer be the user but the server id, since dify does store conversations per user - if you share conversations accross users, you cannot pass the userid since dify would still create a unique conversation per user.
 
@@ -179,8 +184,18 @@ Hint: If you use this, the userId of messages will no longer be the user but the
 There are three ways to trigger the bot:
 
 - application command: The bot will handle the `/chat` command if the application commands have been installed to the server and the user has permissions to use them.
-- mention: The bot will reply if it is mentioned in a message.
-- keywords: The bot will reply if a new message on a text channel contains a one of the configured keywords. The keywords are defined in the `TRIGGER_KEYWORDS` environment variable. This will only work if the bot has permission to read message contents, which must be enabled in the Discord Developer Portal, and the `MESSAGE_CONTENT_ALLOWED` environment variable must be set to `true`. Please read [Message-Content-Privileged-Intent-FAQ](https://support-dev.discord.com/hc/en-us/articles/4404772028055-Message-Content-Privileged-Intent-FAQ) if you want to use this. Use with caution, as this will trigger the bot on every message that the bot is able to read.
+- mention: The bot will reply if it is mentioned directly in a message, or if a message replies to one of the bot's messages. `@everyone`, `@here` and role mentions are ignored.
+- keywords: The bot will reply if a new message on a text channel contains a one of the configured keywords. The keywords are defined in the `TRIGGER_KEYWORDS` environment variable as a JSON array of strings, e.g. `["dify"]`. Any other value logs a warning and disables keywords; the bot keeps running and answering mentions. This will only work if the bot has permission to read message contents, which must be enabled in the Discord Developer Portal, and the `MESSAGE_CONTENT_ALLOWED` environment variable must be set to `true`. Please read [Message-Content-Privileged-Intent-FAQ](https://support-dev.discord.com/hc/en-us/articles/4404772028055-Message-Content-Privileged-Intent-FAQ) if you want to use this. Use with caution, as this will trigger the bot on every message that the bot is able to read.
+
+## Rate limit
+
+Each user may call Dify `RATE_LIMIT_MAX` times (default `10`) per `RATE_LIMIT_WINDOW_SEC` seconds (default `60`), counted across all servers. Set `RATE_LIMIT_MAX=0` to disable the limit. `/new-conversation` is not counted. The counters are kept in memory and reset when the bot restarts.
+
+When a user goes over the limit, a mention, reply or keyword gets one notice per window and later ones are ignored silently; `/chat` gets a private notice every time.
+
+## Dify timeout
+
+If Dify sends nothing for `DIFY_IDLE_TIMEOUT_SEC` seconds (default `120`), the request is aborted and the user is told that something went wrong. Dify's pings count as activity, so long-running workflows are not cut off.
 
 ## Contributing 🤝
 
