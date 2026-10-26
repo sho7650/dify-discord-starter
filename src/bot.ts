@@ -13,6 +13,7 @@ import * as dotenv from "dotenv";
 import { ChatMessageRequest } from "./dify-client/api.types";
 import DifyChatClient from "./dify-client/dify-client";
 import { DifyFile, ThoughtItem, VisionFile } from "./dify-client/dify.types";
+import { splitMessage } from "./split-message";
 
 dotenv.config();
 const conversationCache = new Map<string, string>();
@@ -361,7 +362,7 @@ class DiscordBot {
               case "answer":
                 bufferType = "defaultMessage";
                 handleChatflowAnswer?.(
-                  this.splitMessage(buffer.chatflowAnswer, {
+                  splitMessage(buffer.chatflowAnswer, {
                     maxLength: this.MAX_MESSAGE_LENGTH,
                   }),
                   files
@@ -383,7 +384,7 @@ class DiscordBot {
           },
           onCompleted: () => {
             resolve({
-              messages: this.splitMessage(
+              messages: splitMessage(
                 [buffer.chatflowAnswer, buffer.defaultAnswer]
                   .filter(Boolean)
                   .join("\n\n"),
@@ -430,40 +431,6 @@ class DiscordBot {
       default:
         return "";
     }
-  }
-
-  splitMessage(
-    message: string,
-    options: {
-      maxLength?: number;
-      char?: string;
-      prepend?: string;
-      append?: string;
-    } = {}
-  ): string[] {
-    const {
-      maxLength = 2000,
-      char = "\n",
-      prepend = "",
-      append = "",
-    } = options;
-    if (message.length <= maxLength) return [message];
-    const splitText = message.split(char);
-    if (splitText.some((part) => part.length > maxLength))
-      throw new RangeError("SPLIT_MAX_LEN");
-    const messages = [""];
-    for (let part of splitText) {
-      if (messages[messages.length - 1].length + part.length + 1 > maxLength) {
-        messages[messages.length - 1] += append;
-        messages.push(prepend);
-      }
-      messages[messages.length - 1] +=
-        (messages[messages.length - 1].length > 0 &&
-        messages[messages.length - 1] !== prepend
-          ? char
-          : "") + part;
-    }
-    return messages;
   }
 }
 
