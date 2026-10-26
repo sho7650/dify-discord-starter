@@ -108,6 +108,8 @@ class DifyChatClient {
     const stopIdleTimer = () => clearTimeout(idleTimer);
     const onError: IOnError = (error, code) => {
       stopIdleTimer();
+      // Release the connection; Dify or a proxy may keep the stream open.
+      abortController.abort();
       notifyError?.(error, code);
     };
     const onCompleted: IOnCompleted = (hasError) => {
@@ -120,7 +122,6 @@ class DifyChatClient {
         onError(
           new Error(`No response from Dify for ${this.IDLE_TIMEOUT_SEC}s`)
         );
-        abortController.abort();
       }, this.IDLE_TIMEOUT_SEC * 1000);
     };
     const watchActivity = (res: Response) =>
@@ -280,7 +281,10 @@ class DifyChatClient {
               onData("", false, {
                 conversationId: undefined,
                 messageId: "",
-                errorMessage: bufferObj?.message,
+                // ssePost only treats the line as an error when this is non-empty.
+                errorMessage:
+                  bufferObj?.message ||
+                  `Dify stream error: ${JSON.stringify(bufferObj)}`,
                 errorCode: bufferObj?.code,
               });
               hasError = true;
@@ -379,8 +383,12 @@ class DifyChatClient {
           onCompleted: (hasError?: boolean) => {
             // An error has already been passed to onError.
             if (hasError) return;
-            onCompleted?.();
-            resolve();
+            try {
+              onCompleted?.();
+              resolve();
+            } catch (error) {
+              reject(error);
+            }
           },
           onError: (error: unknown) => {
             reject(error instanceof Error ? error : new Error(String(error)));

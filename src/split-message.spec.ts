@@ -71,4 +71,8 @@ describe("splitMessage", () => {
 
     expect(chunks).toEqual(["aaa\nbbb", "ccc"]);
   });
+
+  it("terminates even when maxLength is too small to hold an emoji", () => {
+    expect(splitMessage("😀😀", { maxLength: 1 })).toEqual(["😀", "😀"]);
+  });
 });

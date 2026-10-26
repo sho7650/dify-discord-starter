@@ -16,7 +16,7 @@ export const defaultConfig: ChatConfig = {
   triggerKeywords: [],
 };
 
-type StreamCallbacks = Parameters<DifyChat["streamChatMessage"]>[1];
+export type StreamCallbacks = Parameters<DifyChat["streamChatMessage"]>[1];
 type StreamScript = (callbacks: StreamCallbacks) => Promise<void> | void;
 
 /**
@@ -124,12 +124,23 @@ export function fakeCommand({
     channelId,
     guildId,
     user: { id: userId, username: userId, globalName: null },
-    replied: false,
+    replied: false as boolean,
     options: { getString: (_name: string, _required: true) => message },
     deferReply: vi.fn(async (_options: unknown) => ({})),
     editReply: vi.fn(async (_options: unknown) => ({})),
     followUp: vi.fn(async (_options: unknown) => ({})),
     reply: vi.fn(async (_options: unknown) => ({})),
   } satisfies IncomingCommand;
+  // Like discord.js, a successful editReply/followUp marks it as replied.
+  const markReplied = (send: (typeof command)["editReply"]) => {
+    const original = send.getMockImplementation()!;
+    send.mockImplementation(async (options) => {
+      const result = await original(options);
+      command.replied = true;
+      return result;
+    });
+  };
+  markReplied(command.editReply);
+  markReplied(command.followUp);
   return command;
 }

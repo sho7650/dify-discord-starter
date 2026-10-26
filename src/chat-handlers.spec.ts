@@ -13,6 +13,7 @@ import {
   fakeCommand,
   fakeDify,
   fakeMessage,
+  StreamCallbacks,
 } from "./test-support/fakes";
 
 function createHandlers(
@@ -127,6 +128,77 @@ describe("ChatHandlers", () => {
         { content: "thinking...", files: [] },
         { content: "done", files: [] },
       ]);
+    });
+
+    it("still answers when Dify sends a node event without the expected fields", async () => {
+      const { dify } = fakeDify("", (callbacks) => {
+        const conversation = { conversationId: "conv-1" };
+        callbacks.onNodeStarted?.({} as never);
+        callbacks.onNodeFinished?.({ data: { node_type: "tool" } } as never);
+        callbacks.onMessage("done", true, conversation);
+        callbacks.onCompleted?.();
+      });
+      const message = fakeMessage();
+
+      await createHandlers({}, dify).handleMessage(message);
+
+      expect(message.reply).toHaveBeenCalledExactlyOnceWith({
+        content: "done",
+        files: [],
+      });
+    });
+  });
+
+  describe("/chat", () => {
+    const node = (node_type: string) =>
+      ({ data: { node_type, title: node_type } }) as never;
+    const chatflowThen = (finish: (callbacks: StreamCallbacks) => void) =>
+      fakeDify("", (callbacks) => {
+        const conversation = { conversationId: "conv-1" };
+        callbacks.onNodeStarted?.(node("llm"));
+        callbacks.onMessage("thinking...", true, conversation);
+        callbacks.onNodeFinished?.(node("answer"));
+        finish(callbacks);
+      }).dify;
+
+    beforeEach(() => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      return () => vi.restoreAllMocks();
+    });
+
+    it("shows a chatflow's intermediate answer first and sends the final answer as a follow-up", async () => {
+      const dify = chatflowThen((callbacks) => {
+        callbacks.onMessage("done", false, { conversationId: "conv-1" });
+        callbacks.onCompleted?.();
+      });
+      const command = fakeCommand();
+
+      await createHandlers({}, dify).handleCommand(command);
+
+      expect(command.editReply).toHaveBeenCalledExactlyOnceWith({
+        content: "thinking...",
+        files: [],
+      });
+      expect(command.followUp).toHaveBeenCalledExactlyOnceWith({
+        content: "done",
+        ephemeral: true,
+        files: [],
+      });
+    });
+
+    it("keeps an answer already shown and reports a later failure as a follow-up", async () => {
+      const dify = chatflowThen(() => {
+        throw new Error("No response from Dify for 120s");
+      });
+      const command = fakeCommand();
+
+      await createHandlers({}, dify).handleCommand(command);
+
+      expect(command.editReply).toHaveBeenCalledOnce();
+      expect(command.followUp).toHaveBeenCalledExactlyOnceWith({
+        content: ERROR_REPLY,
+        ephemeral: true,
+      });
     });
   });
 

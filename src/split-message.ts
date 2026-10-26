@@ -25,15 +25,19 @@ export function splitMessage(
 function cutLongLine(line: string, maxLength: number): string[] {
   if (line.length <= maxLength) return [line];
   const cutAt = findCutIndex(line, maxLength);
-  return [line.slice(0, cutAt), ...cutLongLine(line.slice(cutAt), maxLength)];
+  const rest = line.slice(cutAt);
+  return rest
+    ? [line.slice(0, cutAt), ...cutLongLine(rest, maxLength)]
+    : [line.slice(0, cutAt)];
 }
 
 function findCutIndex(line: string, maxLength: number): number {
   const lastSpace = findLastSpaceIndex(line.slice(0, maxLength));
   if (lastSpace > 0) return lastSpace + 1;
-  return isHighSurrogate(line.charCodeAt(maxLength - 1))
-    ? maxLength - 1
-    : maxLength;
+  if (!isHighSurrogate(line.charCodeAt(maxLength - 1))) return maxLength;
+  // Keep the pair together; if it cannot fit at all, let it overflow by one
+  // rather than never making progress.
+  return maxLength > 1 ? maxLength - 1 : maxLength + 1;
 }
 
 function findLastSpaceIndex(text: string): number {

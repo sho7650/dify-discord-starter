@@ -38,7 +38,7 @@ class DiscordBot {
     this.TOKEN = process.env.DISCORD_BOT_TOKEN || "";
     this.config = {
       historyMode: process.env.HISTORY_MODE || "",
-      maxMessageLength: Number(process.env.MAX_MESSAGE_LENGTH) || 2000,
+      maxMessageLength: readInteger("MAX_MESSAGE_LENGTH", 2000, { min: 1 }),
       messageContentAllowed:
         String(process.env.MESSAGE_CONTENT_ALLOWED).toLowerCase() === "true",
       triggerKeywords: parseTriggerKeywords(process.env.TRIGGER_KEYWORDS),

@@ -175,8 +175,11 @@ export class ChatHandlers {
     } catch (error) {
       console.error("Error sending message to Dify:", error);
       await sending;
+      // Keep any answer already shown; editReply would overwrite it.
       await trySend("error reply", () =>
-        interaction.editReply({ content: ERROR_REPLY })
+        interaction.replied
+          ? interaction.followUp({ content: ERROR_REPLY, ephemeral: true })
+          : interaction.editReply({ content: ERROR_REPLY })
       );
     }
   }

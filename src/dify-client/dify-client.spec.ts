@@ -147,6 +147,43 @@ describe("DifyChatClient.streamChatMessage", () => {
     await expect(stream().done).rejects.toThrow("unexpected");
   });
 
+  it.each([
+    ["an error event without a message", { event: "error", status: 500 }],
+    ["an error event with an empty message", { event: "error", message: "" }],
+    ["a line without event or message", { foo: 1 }],
+  ])("rejects on %s", async (_label, line) => {
+    respondWith(sseResponse(sseLine(line)));
+
+    await expect(stream().done).rejects.toThrow(/dify/i);
+  });
+
+  it("aborts the request after an error event so the connection is released", async () => {
+    const sse = controllableSse();
+    const fetchMock = vi.fn(
+      async (_url: string, _init: RequestInit) => sse.response
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { done } = stream();
+    sse.push(sseLine({ event: "error", status: 500, message: "boom" }));
+    await expect(done).rejects.toThrow("boom");
+
+    expect(fetchMock.mock.calls[0][1].signal?.aborted).toBe(true);
+  });
+
+  it("rejects when the onCompleted callback throws", async () => {
+    respondWith(sseResponse(sseLine({ event: "message_end" })));
+
+    const done = new DifyChatClient().streamChatMessage(request, {
+      onMessage: () => {},
+      onCompleted: () => {
+        throw new Error("callback failed");
+      },
+    });
+
+    await expect(done).rejects.toThrow("callback failed");
+  });
+
   it("rejects when reading the stream fails midway", async () => {
     const sse = controllableSse();
     respondWith(sse.response);
