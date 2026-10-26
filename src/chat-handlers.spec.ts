@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { ChatConfig, ChatHandlers, RATE_LIMIT_REPLY } from "./chat-handlers";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  ChatConfig,
+  ChatHandlers,
+  ERROR_REPLY,
+  RATE_LIMIT_REPLY,
+} from "./chat-handlers";
 import { RateLimiter } from "./rate-limiter";
 import { parseTriggerKeywords } from "./trigger-keywords";
 import {
@@ -303,6 +308,38 @@ describe("ChatHandlers", () => {
       await mentionTimes(handlers, 10);
 
       expect(requests).toHaveLength(10);
+    });
+  });
+
+  describe("Dify failures", () => {
+    beforeEach(() => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      return () => vi.restoreAllMocks();
+    });
+
+    const failingDify = () =>
+      fakeDify("", ({ onMessage }) => {
+        onMessage("partial", true, { conversationId: "conv-1" });
+        throw new Error("No response from Dify for 120s");
+      }).dify;
+
+    it("tells the user something went wrong on a mention", async () => {
+      const message = fakeMessage();
+
+      await createHandlers({}, failingDify()).handleMessage(message);
+
+      expect(message.reply).toHaveBeenCalledExactlyOnceWith(ERROR_REPLY);
+    });
+
+    it("tells the user something went wrong on /chat", async () => {
+      const command = fakeCommand();
+
+      await createHandlers({}, failingDify()).handleCommand(command);
+
+      expect(command.editReply).toHaveBeenCalledExactlyOnceWith({
+        content: ERROR_REPLY,
+      });
+      expect(command.followUp).not.toHaveBeenCalled();
     });
   });
 });

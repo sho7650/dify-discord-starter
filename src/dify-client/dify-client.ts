@@ -16,6 +16,7 @@ import type {
 import type {
   IOnCompleted,
   IOnData,
+  IOnError,
   IOnFile,
   IOnMessageEnd,
   IOnMessageReplace,
@@ -37,10 +38,27 @@ import type {
 
 dotenv.config();
 
+const DEFAULT_IDLE_TIMEOUT_SEC = 120;
+
+function readIdleTimeoutSec(): number {
+  const value = Number(process.env.DIFY_IDLE_TIMEOUT_SEC);
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_IDLE_TIMEOUT_SEC;
+}
+
+/** Dify returns JSON errors, but proxies in front of it may return HTML. */
+function readErrorMessage(body: string): string {
+  try {
+    return JSON.parse(body).message || "Server Error";
+  } catch {
+    return "Server Error";
+  }
+}
+
 class DifyChatClient {
   private axiosInstance: AxiosInstance;
   private readonly API_KEY: string;
   private readonly API_BASE_URL: string;
+  private readonly IDLE_TIMEOUT_SEC: number;
   constructor() {
     const apiKey = process.env.DIFY_API_KEY;
     const apiBaseUrl = process.env.DIFY_API_BASE_URL;
@@ -53,6 +71,7 @@ class DifyChatClient {
 
     this.API_KEY = apiKey;
     this.API_BASE_URL = apiBaseUrl;
+    this.IDLE_TIMEOUT_SEC = readIdleTimeoutSec();
 
     this.axiosInstance = axios.create({
       baseURL: this.API_BASE_URL,
@@ -67,7 +86,7 @@ class DifyChatClient {
     fetchOptions: any,
     {
       onData,
-      onCompleted,
+      onCompleted: notifyCompleted,
       onThought,
       onFile,
       onMessageEnd,
@@ -76,12 +95,46 @@ class DifyChatClient {
       onNodeStarted,
       onNodeFinished,
       onMessageReplace,
-      onError,
+      onError: notifyError,
       getAbortController,
       onPing,
     }: IOtherOptions & { onPing?: () => void }
   ) {
     const abortController = new AbortController();
+
+    // Dify may stall without closing the stream; give up after a quiet period.
+    // Pings count as activity, so long-running workflows are not cut off.
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const stopIdleTimer = () => clearTimeout(idleTimer);
+    const onError: IOnError = (error, code) => {
+      stopIdleTimer();
+      notifyError?.(error, code);
+    };
+    const onCompleted: IOnCompleted = (hasError) => {
+      stopIdleTimer();
+      notifyCompleted?.(hasError);
+    };
+    const restartIdleTimer = () => {
+      stopIdleTimer();
+      idleTimer = setTimeout(() => {
+        onError(
+          new Error(`No response from Dify for ${this.IDLE_TIMEOUT_SEC}s`)
+        );
+        abortController.abort();
+      }, this.IDLE_TIMEOUT_SEC * 1000);
+    };
+    const watchActivity = (res: Response) =>
+      new Response(
+        res.body?.pipeThrough(
+          new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+              restartIdleTimer();
+              controller.enqueue(chunk);
+            },
+          })
+        ),
+        { status: res.status, statusText: res.statusText, headers: res.headers }
+      );
     const baseOptions = {
       method: "GET",
       mode: "cors",
@@ -112,24 +165,27 @@ class DifyChatClient {
     const { body } = options;
     if (body) options.body = JSON.stringify(body);
 
+    restartIdleTimer();
     globalThis
       .fetch(urlWithPrefix, options as RequestInit)
       .then((res) => {
         if (!/^(2|3)\d{2}$/.test(String(res.status))) {
-          res.json().then((data: any) => {
-            console.error({
-              type: "error",
-              message: data.message || "Server Error",
+          return res
+            .text()
+            .catch(() => "")
+            .then((text) => {
+              onError(
+                new Error(
+                  `Server Error. Status Code: ${res.status}. ${readErrorMessage(text)}`
+                )
+              );
             });
-          });
-          onError?.(`Server Error. Status Code: ${res.status}`);
-          return;
         }
         return this.handleStream(
-          res,
+          watchActivity(res),
           (str: string, isFirstMessage: boolean, moreInfo: any) => {
             if (moreInfo.errorMessage) {
-              onError?.(moreInfo.errorMessage, moreInfo.errorCode);
+              onError(moreInfo.errorMessage, moreInfo.errorCode);
               if (
                 moreInfo.errorMessage !==
                 "AbortError: The user aborted a request."
@@ -148,13 +204,14 @@ class DifyChatClient {
           onNodeStarted,
           onNodeFinished,
           onFile,
-          onPing
+          onPing,
+          onError
         );
       })
       .catch((e) => {
         if (e.toString() !== "AbortError: The user aborted a request.")
           console.error(e);
-        onError?.(e);
+        onError(e);
       });
   }
 
@@ -170,20 +227,24 @@ class DifyChatClient {
     onNodeStarted?: IOnNodeStarted,
     onNodeFinished?: IOnNodeFinished,
     onFile?: IOnFile,
-    onPing?: () => void
+    onPing?: () => void,
+    onError?: IOnError
   ) {
     if (!response.ok) {
       throw new Error("Network response was not ok");
     }
+    if (!response.body) {
+      throw new Error("Dify returned an empty response body");
+    }
 
-    const reader = response.body?.getReader();
+    const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
     let bufferObj: Record<string, any>;
     let isFirstMessage = true;
     function read() {
       let hasError = false;
-      reader?.read().then((result: any) => {
+      reader.read().then((result: any) => {
         if (result.done) {
           onCompleted && onCompleted();
           return;
@@ -215,7 +276,7 @@ class DifyChatClient {
               return;
             }
 
-            if (bufferObj.status === 400 || !bufferObj.event) {
+            if (bufferObj.event === "error" || !bufferObj.event) {
               onData("", false, {
                 conversationId: undefined,
                 messageId: "",
@@ -267,7 +328,7 @@ class DifyChatClient {
           return;
         }
         if (!hasError) read();
-      });
+      }, onError);
     }
     read();
   }
@@ -300,35 +361,40 @@ class DifyChatClient {
       onNodeFinished?: IOnNodeFinished;
     }
   ): Promise<void> {
-    this.ssePost(
-      `${this.API_BASE_URL}/chat-messages`,
-      {
-        method: "POST",
-        body,
-        headers: new Headers({
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.API_KEY}`,
-        }),
-      },
-      {
-        onData: (text: string, isFirstMessage: boolean, moreInfo: any) => {
-          onMessage(text, isFirstMessage, moreInfo);
+    return new Promise((resolve, reject) => {
+      this.ssePost(
+        `${this.API_BASE_URL}/chat-messages`,
+        {
+          method: "POST",
+          body,
+          headers: new Headers({
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this.API_KEY}`,
+          }),
         },
-        onCompleted: () => {
-          onCompleted?.();
-        },
-        onError: (error: any) => {
-          console.error(error);
-        },
-        onFile,
-        onPing,
-        onThought,
-        onWorkflowStarted,
-        onWorkflowFinished,
-        onNodeStarted,
-        onNodeFinished,
-      }
-    );
+        {
+          onData: (text: string, isFirstMessage: boolean, moreInfo: any) => {
+            onMessage(text, isFirstMessage, moreInfo);
+          },
+          onCompleted: (hasError?: boolean) => {
+            // An error has already been passed to onError.
+            if (hasError) return;
+            onCompleted?.();
+            resolve();
+          },
+          onError: (error: unknown) => {
+            reject(error instanceof Error ? error : new Error(String(error)));
+          },
+          onFile,
+          onPing,
+          onThought,
+          onWorkflowStarted,
+          onWorkflowFinished,
+          onNodeStarted,
+          onNodeFinished,
+        }
+      );
+    });
   }
 
   public async sendFeedback(

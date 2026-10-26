@@ -234,7 +234,7 @@ export type IOnNodeStarted = (nodeStarted: NodeStarted) => void;
 export type IOnNodeFinished = (nodeFinished: NodeFinished) => void;
 export type IOnAnnotationReply = (messageReplace: AnnotationReply) => void;
 export type IOnCompleted = (hasError?: boolean) => void;
-export type IOnError = (msg: string, code?: string) => void;
+export type IOnError = (error: unknown, code?: string) => void;
 
 export type IOtherOptions = {
   isPublicAPI?: boolean;
