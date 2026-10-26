@@ -4,6 +4,7 @@ import { parseTriggerKeywords } from "./trigger-keywords";
 import {
   BOT_ID,
   defaultConfig,
+  fakeCommand,
   fakeDify,
   fakeMessage,
 } from "./test-support/fakes";
@@ -50,5 +51,130 @@ describe("ChatHandlers", () => {
 
       expect(requests).toHaveLength(1);
     });
+  });
+
+  describe("conversation scope", () => {
+    it.each(["user", "channel"])(
+      "%s mode: does not carry a DM conversation into a public channel",
+      async (historyMode) => {
+        const { dify, requests } = fakeDify();
+        const handlers = createHandlers({ historyMode }, dify);
+
+        await handlers.handleMessage(
+          fakeMessage({ channelId: "dm-1", guildId: null })
+        );
+        await handlers.handleMessage(fakeMessage({ channelId: "channel-1" }));
+
+        expect(requests.map((r) => r.conversation_id)).toEqual(["", ""]);
+      }
+    );
+
+    it.each(["user", "channel"])(
+      "%s mode: continues the conversation for the same user in the same place",
+      async (historyMode) => {
+        const { dify, requests } = fakeDify();
+        const handlers = createHandlers({ historyMode }, dify);
+
+        await handlers.handleMessage(fakeMessage());
+        await handlers.handleMessage(fakeMessage());
+        await handlers.handleCommand(fakeCommand());
+        await handlers.handleCommand(fakeCommand());
+
+        expect(requests.map((r) => r.conversation_id)).toEqual([
+          "",
+          "conv-1",
+          "",
+          "conv-2",
+        ]);
+      }
+    );
+
+    it.each(["user", "channel"])(
+      "%s mode: keeps /chat and the public exchange as separate conversations",
+      async (historyMode) => {
+        const { dify, requests } = fakeDify();
+        const handlers = createHandlers({ historyMode }, dify);
+
+        await handlers.handleMessage(fakeMessage());
+        await handlers.handleCommand(fakeCommand());
+
+        expect(requests.map((r) => r.conversation_id)).toEqual(["", ""]);
+      }
+    );
+
+    it("channel mode: keeps one user's /chat away from other users", async () => {
+      const { dify, requests } = fakeDify();
+      const handlers = createHandlers({ historyMode: "channel" }, dify);
+
+      await handlers.handleCommand(fakeCommand({ userId: "user-a" }));
+      await handlers.handleMessage(fakeMessage({ authorId: "user-b" }));
+      await handlers.handleCommand(fakeCommand({ userId: "user-b" }));
+
+      expect(requests.map((r) => r.conversation_id)).toEqual(["", "", ""]);
+    });
+
+    it("channel mode: shares the public exchange among users of a place", async () => {
+      const { dify, requests } = fakeDify();
+      const handlers = createHandlers({ historyMode: "channel" }, dify);
+
+      await handlers.handleMessage(fakeMessage({ authorId: "user-a" }));
+      await handlers.handleMessage(fakeMessage({ authorId: "user-b" }));
+
+      expect(requests.map((r) => r.conversation_id)).toEqual(["", "conv-1"]);
+    });
+
+    it.each(["user", "channel"])(
+      "%s mode: /new-conversation restarts the caller's public and private conversations",
+      async (historyMode) => {
+        const { dify, requests } = fakeDify();
+        const handlers = createHandlers({ historyMode }, dify);
+        await handlers.handleMessage(fakeMessage());
+        await handlers.handleCommand(fakeCommand());
+
+        await handlers.handleCommand(
+          fakeCommand({ commandName: "new-conversation" })
+        );
+        await handlers.handleMessage(fakeMessage());
+        await handlers.handleCommand(fakeCommand());
+
+        expect(requests.map((r) => r.conversation_id)).toEqual([
+          "",
+          "",
+          "",
+          "",
+        ]);
+      }
+    );
+
+    it.each(["user", "channel"])(
+      "%s mode: /new-conversation keeps other users' private conversations and other places",
+      async (historyMode) => {
+        const { dify, requests } = fakeDify();
+        const handlers = createHandlers({ historyMode }, dify);
+        const otherUsersChat = () =>
+          fakeCommand({ userId: "user-b", channelId: "channel-1" });
+        const callerElsewhere = () =>
+          fakeMessage({ authorId: "user-a", channelId: "channel-2" });
+        await handlers.handleCommand(otherUsersChat());
+        await handlers.handleMessage(callerElsewhere());
+
+        await handlers.handleCommand(
+          fakeCommand({
+            commandName: "new-conversation",
+            userId: "user-a",
+            channelId: "channel-1",
+          })
+        );
+        await handlers.handleCommand(otherUsersChat());
+        await handlers.handleMessage(callerElsewhere());
+
+        expect(requests.map((r) => r.conversation_id)).toEqual([
+          "",
+          "",
+          "conv-1",
+          "conv-2",
+        ]);
+      }
+    );
   });
 });

@@ -5,6 +5,7 @@ import type {
 } from "discord.js";
 import { ChatMessageRequest } from "./dify-client/api.types";
 import { DifyFile } from "./dify-client/dify.types";
+import { ConversationScope, ConversationStore } from "./conversation-store";
 import {
   AnswerFile,
   DifyChat,
@@ -61,9 +62,11 @@ export const ERROR_REPLY =
   "Sorry, something went wrong while generating the answer.";
 
 export class ChatHandlers {
-  private readonly conversationCache = new Map<string, string>();
+  private readonly conversations: ConversationStore;
 
-  constructor(private readonly deps: ChatHandlersDeps) {}
+  constructor(private readonly deps: ChatHandlersDeps) {
+    this.conversations = new ConversationStore(deps.config.historyMode);
+  }
 
   public async handleMessage(message: IncomingMessage): Promise<void> {
     if (message.author.bot) return;
@@ -85,11 +88,7 @@ export class ChatHandlers {
     if (interaction.commandName === "chat") {
       await this.handleChatCommand(interaction);
     } else if (interaction.commandName === "new-conversation") {
-      const cacheId =
-        this.deps.config.historyMode === "user"
-          ? interaction.user.id
-          : interaction.channelId;
-      this.conversationCache.delete(cacheId);
+      this.conversations.reset(interaction.channelId, interaction.user.id);
       await interaction.reply("New conversation started!");
     }
   }
@@ -97,10 +96,11 @@ export class ChatHandlers {
   private async handleChatCommand(interaction: IncomingCommand) {
     await interaction.deferReply({ ephemeral: true });
 
-    const cacheKey = this.getCacheKey(
-      interaction.user.id,
-      interaction.channelId
-    );
+    const scope: ConversationScope = {
+      kind: "private",
+      placeId: interaction.channelId,
+      userId: interaction.user.id,
+    };
 
     try {
       const { messages, files } = await this.generate(
@@ -111,14 +111,13 @@ export class ChatHandlers {
           },
           query: interaction.options.getString("message", true),
           response_mode: "streaming",
-          conversation_id:
-            (cacheKey && this.conversationCache.get(cacheKey)) || "",
+          conversation_id: this.conversations.find(scope),
           user: this.getUserId(
             interaction.user.id,
             interaction.guildId ?? undefined
           ),
         },
-        cacheKey,
+        scope,
         {
           handleChatflowAnswer: (chatflowMessages, files) => {
             if (chatflowMessages.length > 0) {
@@ -162,7 +161,11 @@ export class ChatHandlers {
   }
 
   private async handleChatMessage(message: IncomingMessage) {
-    const cacheKey = this.getCacheKey(message.author.id, message.channelId);
+    const scope: ConversationScope = {
+      kind: "public",
+      placeId: message.channelId,
+      userId: message.author.id,
+    };
 
     message.channel.sendTyping?.().catch(console.error);
 
@@ -175,11 +178,10 @@ export class ChatHandlers {
           },
           query: message.content.replace(`<@${this.deps.botUserId}>`, ""),
           response_mode: "streaming",
-          conversation_id:
-            (cacheKey && this.conversationCache.get(cacheKey)) || "",
+          conversation_id: this.conversations.find(scope),
           user: this.getUserId(message.author.id, message.guildId ?? undefined),
         },
-        cacheKey,
+        scope,
         {
           onPing: async () => {
             await message.channel.sendTyping?.().catch(console.error);
@@ -219,30 +221,16 @@ export class ChatHandlers {
 
   private generate(
     request: ChatMessageRequest,
-    cacheKey: string,
+    scope: ConversationScope,
     options: Pick<GenerateAnswerOptions, "onPing" | "handleChatflowAnswer">
   ) {
     return generateAnswer(this.deps.dify, request, {
       ...options,
       maxMessageLength: this.deps.config.maxMessageLength,
       onConversationId: (conversationId) => {
-        if (cacheKey) this.conversationCache.set(cacheKey, conversationId);
+        this.conversations.remember(scope, conversationId);
       },
     });
-  }
-
-  private getCacheKey(
-    userId: string | undefined,
-    channelId: string | undefined
-  ): string {
-    switch (this.deps.config.historyMode) {
-      case "user":
-        return userId || "";
-      case "channel":
-        return channelId || "";
-      default:
-        return "";
-    }
   }
 
   private getUserId(userId: string | undefined, serverId: string | undefined) {
