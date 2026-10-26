@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ChatConfig, ChatHandlers } from "./chat-handlers";
+import { ChatConfig, ChatHandlers, RATE_LIMIT_REPLY } from "./chat-handlers";
+import { RateLimiter } from "./rate-limiter";
 import { parseTriggerKeywords } from "./trigger-keywords";
 import {
   BOT_ID,
@@ -11,13 +12,25 @@ import {
 
 function createHandlers(
   config: Partial<ChatConfig> = {},
-  dify = fakeDify().dify
+  dify = fakeDify().dify,
+  rateLimiter = new RateLimiter({ max: 10, windowSec: 60 })
 ) {
   return new ChatHandlers({
     botUserId: BOT_ID,
     dify,
     config: { ...defaultConfig, ...config },
+    rateLimiter,
   });
+}
+
+async function mentionTimes(
+  handlers: ChatHandlers,
+  times: number,
+  options: Parameters<typeof fakeMessage>[0] = {}
+) {
+  const messages = Array.from({ length: times }, () => fakeMessage(options));
+  for (const message of messages) await handlers.handleMessage(message);
+  return messages;
 }
 
 describe("ChatHandlers", () => {
@@ -231,5 +244,65 @@ describe("ChatHandlers", () => {
         ]);
       }
     );
+  });
+
+  describe("rate limit", () => {
+    it("does not call Dify for the 11th mention and notifies only once per window", async () => {
+      const { dify, requests } = fakeDify();
+      const handlers = createHandlers({}, dify);
+
+      const messages = await mentionTimes(handlers, 12);
+
+      expect(requests).toHaveLength(10);
+      expect(messages[10].reply).toHaveBeenCalledExactlyOnceWith(
+        RATE_LIMIT_REPLY
+      );
+      expect(messages[11].reply).not.toHaveBeenCalled();
+    });
+
+    it("answers every /chat over the limit with an ephemeral notice", async () => {
+      const { dify, requests } = fakeDify();
+      const handlers = createHandlers({}, dify);
+      await mentionTimes(handlers, 10);
+
+      const commands = [fakeCommand(), fakeCommand()];
+      for (const command of commands) await handlers.handleCommand(command);
+
+      expect(requests).toHaveLength(10);
+      for (const command of commands) {
+        expect(command.reply).toHaveBeenCalledExactlyOnceWith({
+          content: RATE_LIMIT_REPLY,
+          ephemeral: true,
+        });
+        expect(command.deferReply).not.toHaveBeenCalled();
+      }
+    });
+
+    it("counts calls from different servers as the same user", async () => {
+      const { dify, requests } = fakeDify();
+      const handlers = createHandlers({}, dify);
+      await mentionTimes(handlers, 10, { guildId: "guild-1" });
+
+      await mentionTimes(handlers, 1, {
+        guildId: "guild-2",
+        channelId: "channel-2",
+      });
+
+      expect(requests).toHaveLength(10);
+    });
+
+    it("does not count /new-conversation", async () => {
+      const { dify, requests } = fakeDify();
+      const handlers = createHandlers({}, dify);
+      for (let i = 0; i < 10; i++) {
+        await handlers.handleCommand(
+          fakeCommand({ commandName: "new-conversation" })
+        );
+      }
+
+      await mentionTimes(handlers, 10);
+
+      expect(requests).toHaveLength(10);
+    });
   });
 });

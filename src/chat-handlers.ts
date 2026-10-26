@@ -6,6 +6,7 @@ import type {
 import { ChatMessageRequest } from "./dify-client/api.types";
 import { DifyFile } from "./dify-client/dify.types";
 import { ConversationScope, ConversationStore } from "./conversation-store";
+import { RateLimiter } from "./rate-limiter";
 import {
   AnswerFile,
   DifyChat,
@@ -59,10 +60,14 @@ export interface ChatHandlersDeps {
   botUserId: string;
   dify: DifyChat;
   config: ChatConfig;
+  rateLimiter: RateLimiter;
 }
 
 export const ERROR_REPLY =
   "Sorry, something went wrong while generating the answer.";
+
+export const RATE_LIMIT_REPLY =
+  "You are sending messages too fast. Please wait a moment and try again.";
 
 export class ChatHandlers {
   private readonly conversations: ConversationStore;
@@ -86,8 +91,18 @@ export class ChatHandlers {
         message.content.toLowerCase().includes(keyword.toLowerCase())
       );
 
-    if (isMentioned || isKeywordTriggered) {
-      await this.handleChatMessage(message);
+    if (!isMentioned && !isKeywordTriggered) return;
+
+    // Tell the user once per window; replying every time would let one user
+    // make the bot spam the channel.
+    switch (this.deps.rateLimiter.consume(message.author.id)) {
+      case "allowed":
+        return this.handleChatMessage(message);
+      case "rejected":
+        await message.reply(RATE_LIMIT_REPLY);
+        return;
+      case "rejected-again":
+        return;
     }
   }
 
@@ -101,6 +116,13 @@ export class ChatHandlers {
   }
 
   private async handleChatCommand(interaction: IncomingCommand) {
+    // Discord requires a response to every command, so each rejection is
+    // answered, privately.
+    if (this.deps.rateLimiter.consume(interaction.user.id) !== "allowed") {
+      await interaction.reply({ content: RATE_LIMIT_REPLY, ephemeral: true });
+      return;
+    }
+
     await interaction.deferReply({ ephemeral: true });
 
     const scope: ConversationScope = {

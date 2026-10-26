@@ -5,14 +5,32 @@ import { Client, IntentsBitField } from "discord.js";
 import * as dotenv from "dotenv";
 import { ChatConfig, ChatHandlers } from "./chat-handlers";
 import DifyChatClient from "./dify-client/dify-client";
+import { RateLimiter } from "./rate-limiter";
 import { parseTriggerKeywords } from "./trigger-keywords";
 
 dotenv.config();
+
+const DEFAULT_RATE_LIMIT_MAX = 10;
+const DEFAULT_RATE_LIMIT_WINDOW_SEC = 60;
+
+function readInteger(
+  name: string,
+  fallback: number,
+  { min }: { min: number }
+): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number(raw);
+  if (Number.isInteger(value) && value >= min) return value;
+  console.warn(`${name} must be an integer >= ${min}. Using ${fallback}.`);
+  return fallback;
+}
 
 class DiscordBot {
   private client: Client;
   private difyClient: DifyChatClient;
   private handlers?: ChatHandlers;
+  private readonly rateLimiter: RateLimiter;
   private readonly TOKEN: string;
   private readonly config: ChatConfig;
 
@@ -25,6 +43,15 @@ class DiscordBot {
         String(process.env.MESSAGE_CONTENT_ALLOWED).toLowerCase() === "true",
       triggerKeywords: parseTriggerKeywords(process.env.TRIGGER_KEYWORDS),
     };
+
+    this.rateLimiter = new RateLimiter({
+      max: readInteger("RATE_LIMIT_MAX", DEFAULT_RATE_LIMIT_MAX, { min: 0 }),
+      windowSec: readInteger(
+        "RATE_LIMIT_WINDOW_SEC",
+        DEFAULT_RATE_LIMIT_WINDOW_SEC,
+        { min: 1 }
+      ),
+    });
 
     if (!this.TOKEN) {
       throw new Error("DISCORD_BOT_TOKEN must be provided in the .env file");
@@ -50,6 +77,7 @@ class DiscordBot {
         botUserId: readyClient.user.id,
         dify: this.difyClient,
         config: this.config,
+        rateLimiter: this.rateLimiter,
       });
       console.log(
         "Discord bot is ready!",
