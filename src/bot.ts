@@ -3,6 +3,7 @@ import { REST } from "@discordjs/rest";
 import { Routes } from "discord-api-types/v9";
 import {
   ChannelType,
+  ChatInputCommandInteraction,
   Client,
   CommandInteraction,
   IntentsBitField,
@@ -79,7 +80,7 @@ class DiscordBot {
     });
 
     this.client.on("interactionCreate", async (interaction) => {
-      if (!interaction.isCommand()) return;
+      if (!interaction.isChatInputCommand()) return;
 
       if (interaction.commandName === "chat") {
         await this.handleChatCommand(interaction);
@@ -156,7 +157,7 @@ class DiscordBot {
     }
   }
 
-  private async handleChatCommand(interaction: CommandInteraction) {
+  private async handleChatCommand(interaction: ChatInputCommandInteraction) {
     await interaction.deferReply({ ephemeral: true });
 
     const message = interaction.options.get("message", true);
